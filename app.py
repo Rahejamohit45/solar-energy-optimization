@@ -27,7 +27,7 @@ DEFAULT_STATE = {
     "daily_results": None,
     "city_results": [],
     "weather_data": None,
-    "weather_city": "Ulhasnagar",
+    "weather_city": "Ulhasnagar, Maharashtra, India",
     "selected_city_id": None,
     "last_search": "",
     "weather_coordinates": None
@@ -184,7 +184,6 @@ def predict_generation(weather):
         capacity_kw
     )
 
-    # No meaningful solar production at night.
     night_mask = (
         weather["solar_irradiance_w_m2"].to_numpy() <= 1
     )
@@ -195,7 +194,7 @@ def predict_generation(weather):
 
 
 # ==================================================
-# CITY SEARCH API
+# INDIA-ONLY CITY SEARCH
 # ==================================================
 
 @st.cache_data(ttl=3600)
@@ -210,9 +209,10 @@ def search_city(city_name):
         "https://geocoding-api.open-meteo.com/v1/search",
         params={
             "name": city_name,
-            "count": 10,
+            "count": 100,
             "language": "en",
-            "format": "json"
+            "format": "json",
+            "countryCode": "IN"
         },
         timeout=20
     )
@@ -221,7 +221,16 @@ def search_city(city_name):
 
     response_data = response.json()
 
-    return response_data.get("results", [])
+    # Extra country check for safety.
+    results = response_data.get("results", [])
+
+    indian_results = [
+        city
+        for city in results
+        if city.get("country_code", "").upper() == "IN"
+    ]
+
+    return indian_results
 
 
 # ==================================================
@@ -292,7 +301,7 @@ def format_city(city):
 
     country = city.get(
         "country",
-        ""
+        "India"
     )
 
     parts = [
@@ -335,6 +344,10 @@ st.sidebar.caption(
 )
 
 st.sidebar.caption(
+    "📍 Location search restricted to India."
+)
+
+st.sidebar.caption(
     f"Model capacity limit: {capacity_kw:.1f} kW"
 )
 
@@ -354,25 +367,10 @@ if page == "Dashboard":
 
     results = st.session_state.daily_results or {}
 
-    generation = results.get(
-        "generation",
-        0.0
-    )
-
-    consumption = results.get(
-        "consumption",
-        0.0
-    )
-
-    grid_import = results.get(
-        "grid_import",
-        0.0
-    )
-
-    savings = results.get(
-        "savings",
-        0.0
-    )
+    generation = results.get("generation", 0.0)
+    consumption = results.get("consumption", 0.0)
+    grid_import = results.get("grid_import", 0.0)
+    savings = results.get("savings", 0.0)
 
     col1, col2, col3, col4 = st.columns(4)
 
@@ -466,24 +464,20 @@ elif page == "Solar Prediction":
     st.title("🌞 Solar Generation Prediction")
 
     st.caption(
-        "Search any city, fetch its weather forecast "
+        "Search Indian cities, fetch their weather forecast "
         "and estimate hourly solar generation."
     )
-
-    # ----------------------------------------------
-    # CITY SEARCH FORM
-    # ----------------------------------------------
 
     with st.form("city_search_form"):
 
         city_name = st.text_input(
-            "📍 Enter City Name",
+            "📍 Enter Indian City Name",
             value="Ulhasnagar",
             placeholder="Mumbai, Pune, Delhi, Nashik..."
         )
 
         search_button = st.form_submit_button(
-            "🔍 Search City",
+            "🔍 Search Indian City",
             type="primary"
         )
 
@@ -492,7 +486,7 @@ elif page == "Solar Prediction":
         if not city_name.strip():
 
             st.warning(
-                "Please enter a city name."
+                "Please enter an Indian city name."
             )
 
         else:
@@ -500,12 +494,10 @@ elif page == "Solar Prediction":
             try:
 
                 with st.spinner(
-                    f"Searching for {city_name}..."
+                    f"Searching India for {city_name}..."
                 ):
 
-                    cities = search_city(
-                        city_name
-                    )
+                    cities = search_city(city_name)
 
                 st.session_state.city_results = cities
                 st.session_state.last_search = city_name.strip()
@@ -515,14 +507,14 @@ elif page == "Solar Prediction":
                 if cities:
 
                     st.success(
-                        f"Found {len(cities)} matching location(s)."
+                        f"Found {len(cities)} matching Indian location(s)."
                     )
 
                 else:
 
                     st.warning(
-                        "No matching cities found. "
-                        "Try the English spelling, such as Mumbai or Pune."
+                        "No matching Indian locations found. "
+                        "Try Mumbai, Pune, Delhi, Ulhasnagar or Thane."
                     )
 
             except requests.RequestException as error:
@@ -537,15 +529,11 @@ elif page == "Solar Prediction":
                     f"Unexpected error: {error}"
                 )
 
-    # ----------------------------------------------
-    # SHOW CITY SEARCH RESULTS
-    # ----------------------------------------------
-
     cities = st.session_state.city_results
 
     if cities:
 
-        st.subheader("📍 Search Results")
+        st.subheader("📍 Indian Search Results")
 
         labels = [
             format_city(city)
@@ -553,7 +541,7 @@ elif page == "Solar Prediction":
         ]
 
         selected_index = st.selectbox(
-            "Select your city or location",
+            "Select your Indian city or location",
             options=range(len(cities)),
             format_func=lambda index: labels[index],
             key="selected_city_index"
@@ -563,7 +551,8 @@ elif page == "Solar Prediction":
 
         st.caption(
             f"Latitude: {selected_city['latitude']:.4f} | "
-            f"Longitude: {selected_city['longitude']:.4f}"
+            f"Longitude: {selected_city['longitude']:.4f} | "
+            f"Country: India"
         )
 
         fetch_weather = st.button(
@@ -615,10 +604,6 @@ elif page == "Solar Prediction":
                     f"Could not load weather: {error}"
                 )
 
-    # ----------------------------------------------
-    # WEATHER AND GENERATION PREDICTION
-    # ----------------------------------------------
-
     records = st.session_state.weather_data
 
     if records:
@@ -666,9 +651,7 @@ elif page == "Solar Prediction":
             == selected_date
         ].copy()
 
-        day_data = day_data.sort_values(
-            "Time"
-        )
+        day_data = day_data.sort_values("Time")
 
         if len(day_data) != 24:
 
@@ -730,9 +713,7 @@ elif page == "Solar Prediction":
                 "Solar Radiation (W/m²)"
             ]
 
-            st.line_chart(
-                weather_chart
-            )
+            st.line_chart(weather_chart)
 
             with st.expander(
                 "View hourly weather and prediction table"
@@ -804,7 +785,6 @@ elif page == "Solar Prediction":
                 type="primary"
             ):
 
-                # Simplified daily energy balance.
                 self_consumed = min(
                     consumption,
                     total_generation
@@ -820,9 +800,7 @@ elif page == "Solar Prediction":
                     0
                 )
 
-                bill_without_solar = (
-                    consumption * rate
-                )
+                bill_without_solar = consumption * rate
 
                 bill_with_solar = (
                     grid_import * rate
@@ -1008,13 +986,9 @@ elif page == "Investment Calculator":
 
     annual_generation = daily_generation * 365
 
-    directly_used = (
-        annual_generation * self_use / 100
-    )
+    directly_used = annual_generation * self_use / 100
 
-    exported = (
-        annual_generation - directly_used
-    )
+    exported = annual_generation - directly_used
 
     annual_benefit = (
         directly_used * rate
